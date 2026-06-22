@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rxivllm - Research Assistant</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PDF.js for extracting text from PDFs locally in the browser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+
+    <style>
+        /* Custom scrollbar for a cleaner look */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Arxiv green theme colors (updated from red) */
+        .bg-arxiv-green { background-color: #1b5e20; }
+        .text-arxiv-green { color: #1b5e20; }
+        .border-arxiv-green { border-color: #1b5e20; }
+        .ring-arxiv-green { --tw-ring-color: #1b5e20; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col bg-gray-50 text-gray-900 overflow-hidden font-sans">
+
+    <!-- Toast container for sleek in-app feedback (bypasses browser alert restrictions) -->
+    <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
+
+    <!-- Header -->
+    <header class="bg-arxiv-green text-white p-3 flex justify-between items-center shadow-md z-30 relative shrink-0">
+        <div class="flex items-baseline space-x-2">
+            <h1 class="text-2xl font-bold font-serif tracking-tight">rxiv<span class="opacity-80">llm</span></h1>
+            <span id="versionLabel" class="text-xs opacity-75 font-mono">v1.2 (Resilient Multi-Model)</span>
+        </div>
+        
+        <div class="flex items-center space-x-3 bg-white/10 p-1.5 rounded-lg border border-white/20">
+            <label for="modelSelect" class="text-sm font-medium opacity-90 hidden md:block">Model:</label>
+            <select id="modelSelect" class="bg-white text-black px-2 py-1 rounded text-sm font-medium border-none focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer">
+                <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (Fast)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Ultra-Reliable Fallback)</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Reasoning)</option>
+            </select>
+            
+            <label for="apiKeyInput" class="text-sm font-medium opacity-90 hidden sm:block">API Key:</label>
+            <input type="password" id="apiKeyInput" placeholder="Enter Gemini API Key..." 
+                class="px-3 py-1 text-black rounded text-sm w-36 sm:w-48 border-none focus:outline-none focus:ring-2 focus:ring-white/50 placeholder-gray-500">
+            <button id="connectBtn" class="bg-white text-arxiv-green px-4 py-1 rounded text-sm font-bold hover:bg-gray-100 transition-colors shadow-sm">
+                Connect
+            </button>
+            <div class="flex items-center space-x-1.5 ml-2 mr-1" title="API Status">
+                <div id="statusIndicator" class="w-3 h-3 rounded-full bg-gray-400 border border-white shadow-inner transition-colors duration-300"></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex overflow-hidden w-full h-full">
+        
+        <!-- Left Sidebar: Document Management (Styled with modern light blue primary block) -->
+        <aside class="w-72 bg-white border-r border-gray-200 flex flex-col shrink-0 shadow-[2px_0_5px_rgba(0,0,0,0.02)] z-20">
+            <div class="p-4 border-b border-gray-100 bg-blue-50/40">
+                <div class="flex flex-col gap-2">
+                    <label class="flex items-center justify-center w-full bg-blue-50 border border-blue-200 text-blue-700 font-semibold py-2.5 px-4 rounded-lg cursor-pointer hover:bg-blue-100 hover:border-blue-300 transition-all shadow-sm group">
+                        <svg class="w-5 h-5 mr-2 text-blue-500 group-hover:text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Upload Papers (PDF)
+                        <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
+                    </label>
+                    <button id="clearAllBtn" class="w-full text-xs font-semibold py-1.5 px-3 rounded text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors hidden">
+                        Clear All Corpus
+                    </button>
+                </div>
+                <p class="text-xs text-blue-600/90 text-center mt-2 font-medium">Upload multiple PDFs to analyze together</p>
+            </div>
+            
+            <div class="p-3 bg-gray-100/50 border-b border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-wider flex justify-between items-center">
+                <span>Corpus</span>
+                <span id="corpusCount" class="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full text-[10px]">0</span>
+            </div>
+            
+            <div id="documentList" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <!-- Document items will be injected here -->
+                <div id="emptyDocsState" class="text-center p-6 text-gray-400 text-sm mt-4">
+                    <svg class="w-10 h-10 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    <p>No papers uploaded yet.</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center: Document Viewer (Custom Inline Scrollable Canvas Engine) -->
+        <main class="flex-1 bg-gray-200 flex flex-col relative min-w-0 z-10 overflow-hidden">
+            <div id="noPdfMessage" class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-10 pointer-events-none bg-gray-100">
+                <svg class="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                <p class="text-xl font-medium text-gray-400">Select a document to view</p>
+            </div>
+            
+            <!-- Native container hosting scrollable PDF pages drawn directly via PDFJS onto canvas elements -->
+            <div id="pdfCanvasViewer" class="w-full h-full overflow-y-auto overflow-x-hidden p-6 space-y-6 flex flex-col items-center hidden z-20 bg-gray-300">
+                <!-- Pages are dynamically generated here -->
+            </div>
+        </main>
+
+        <!-- Right Sidebar: Chat Interface -->
+        <aside class="w-96 bg-white border-l border-gray-200 flex flex-col shrink-0 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] z-20">
+            <div class="p-4 bg-gray-50 border-b border-gray-200 flex items-center space-x-2">
+                <svg class="w-5 h-5 text-arxiv-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                <h2 class="font-semibold text-gray-800">Research Assistant</h2>
+            </div>
+            
+            <div id="chatHistory" class="flex-1 overflow-y-auto p-4 space-y-5 text-sm bg-white">
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 bg-arxiv-green/10 rounded-full p-2 mr-3 border border-arxiv-green/20 flex items-center justify-center w-9 h-9">
+                        <!-- Custom vector academic robot avatar representing rxivllm assistant -->
+                        <svg class="w-5 h-5 text-arxiv-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h.01M15 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 14a3 3 0 003-3h-6a3 3 0 003 3z" />
+                        </svg>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-100 text-gray-800 p-3 rounded-2xl rounded-tl-sm shadow-sm">
+                        <p class="mb-2 font-bold text-arxiv-green flex items-center space-x-1">
+                            <span>rxivllm</span>
+                            <span class="bg-arxiv-green/10 text-arxiv-green text-[10px] font-mono px-1.5 py-0.5 rounded-full font-normal">AI Assistant</span>
+                        </p>
+                        <p class="mb-2">Hello! I am rxivllm. To get started:</p>
+                        <ol class="list-decimal pl-4 space-y-1 text-gray-600">
+                            <li>Enter your Gemini API key in the top right.</li>
+                            <li>Upload one or more research papers (PDF) on the left.</li>
+                            <li>Ask me questions about the combined content of your uploaded papers!</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 border-t border-gray-200 bg-gray-50">
+                <div class="relative">
+                    <textarea id="chatInput" rows="3" 
+                        class="w-full border border-gray-300 rounded-lg p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-arxiv-green focus:border-transparent resize-none shadow-sm text-sm" 
+                        placeholder="Ask about the uploaded papers..."
+                        disabled></textarea>
+                    <button id="sendBtn" disabled class="absolute bottom-3 right-3 p-1.5 bg-arxiv-green text-white rounded-md hover:bg-green-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                    </button>
+                </div>
+                <div id="contextStatus" class="mt-2 text-xs text-center text-gray-500 font-mono">
+                    Context: 0 papers loaded
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        const state = {
+            apiKey: '',
+            isConnected: false,
+            documents: [], // { id, name, file, objectUrl, text, isExtracting }
+            activeDocId: null,
+            chatHistory: [] // { role: "user" | "model", text: "..." }
+        };
+
+        // --- DOM Elements ---
+        const els = {
+            apiKeyInput: document.getElementById('apiKeyInput'),
+            connectBtn: document.getElementById('connectBtn'),
+            statusIndicator: document.getElementById('statusIndicator'),
+            fileInput: document.getElementById('fileInput'),
+            clearAllBtn: document.getElementById('clearAllBtn'),
+            corpusCount: document.getElementById('corpusCount'),
+            documentList: document.getElementById('documentList'),
+            emptyDocsState: document.getElementById('emptyDocsState'),
+            pdfCanvasViewer: document.getElementById('pdfCanvasViewer'),
+            noPdfMessage: document.getElementById('noPdfMessage'),
+            chatHistory: document.getElementById('chatHistory'),
+            chatInput: document.getElementById('chatInput'),
+            sendBtn: document.getElementById('sendBtn'),
+            contextStatus: document.getElementById('contextStatus'),
+            toastContainer: document.getElementById('toastContainer'),
+            modelSelect: document.getElementById('modelSelect'),
+            versionLabel: document.getElementById('versionLabel')
+        };
+
+        // Custom high-fidelity interactive feedback replacing raw browser 'alerts'
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            let bg = 'bg-gray-800 text-white';
+            let icon = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+            
+            if (type === 'success') {
+                bg = 'bg-emerald-600 text-white';
+                icon = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+            } else if (type === 'error') {
+                bg = 'bg-rose-600 text-white';
+                icon = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+            } else if (type === 'warning') {
+                bg = 'bg-amber-500 text-white';
+                icon = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>';
+            }
+            
+            toast.className = `${bg} flex items-center p-3.5 rounded-lg shadow-xl transition-all duration-300 transform translate-y-2 opacity-0 space-x-3 text-sm font-medium pointer-events-auto`;
+            toast.innerHTML = `
+                ${icon}
+                <span class="flex-1">${message}</span>
+                <button class="text-white hover:opacity-75 focus:outline-none shrink-0" onclick="this.parentElement.remove()">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            `;
+            
+            els.toastContainer.appendChild(toast);
+            
+            // Animation Trigger
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+            
+            // Auto Removal
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        els.connectBtn.addEventListener('click', async () => {
+            const key = els.apiKeyInput.value.trim();
+            if (!key) {
+                showToast("Please enter a valid API key.", "warning");
+                return;
+            }
+
+            // Quick validation UI feedback
+            els.connectBtn.textContent = "Connecting...";
+            els.connectBtn.disabled = true;
+
+            try {
+                // Test the key with a lightweight models query. Bypasses individual model 503 bottlenecks.
+                const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
+                const res = await fetch(testUrl);
+                
+                if (res.ok) {
+                    state.apiKey = key;
+                    state.isConnected = true;
+                    els.statusIndicator.classList.remove('bg-gray-400', 'bg-red-500');
+                    els.statusIndicator.classList.add('bg-green-500');
+                    els.connectBtn.textContent = "Connected";
+                    els.connectBtn.classList.replace('text-arxiv-green', 'text-green-600');
+                    showToast("Gemini Platform successfully connected!", "success");
+                    updateChatUIState();
+                } else {
+                    throw new Error("Invalid API Key");
+                }
+            } catch (err) {
+                state.isConnected = false;
+                els.statusIndicator.classList.remove('bg-gray-400', 'bg-green-500');
+                els.statusIndicator.classList.add('bg-red-500');
+                els.connectBtn.textContent = "Connect";
+                showToast("Connection failed. Please check your Gemini API key.", "error");
+            } finally {
+                els.connectBtn.disabled = false;
+            }
+        });
+
+        function updateChatUIState() {
+            const ready = state.isConnected && state.documents.some(d => d.text !== null);
+            els.chatInput.disabled = !ready;
+            els.sendBtn.disabled = !ready;
+            
+            if (ready) {
+                els.chatInput.placeholder = "Ask about the uploaded papers...";
+            } else if (!state.isConnected) {
+                els.chatInput.placeholder = "Please connect API key first...";
+            } else {
+                els.chatInput.placeholder = "Please upload papers first...";
+            }
+            
+            const loadedCount = state.documents.filter(d => d.text).length;
+            els.contextStatus.textContent = `Context: ${loadedCount} paper(s) loaded into memory`;
+            
+            // Show/Hide Clear All button based on document count
+            if (state.documents.length > 0) {
+                els.clearAllBtn.classList.remove('hidden');
+            } else {
+                els.clearAllBtn.classList.add('hidden');
+            }
+            els.corpusCount.textContent = state.documents.length;
+        }
+
+        els.fileInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (!files.length) return;
+
+            els.emptyDocsState.style.display = 'none';
+
+            for (const file of files) {
+                const docId = 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                const objectUrl = URL.createObjectURL(file);
+                
+                const doc = {
+                    id: docId,
+                    name: file.name,
+                    file: file,
+                    objectUrl: objectUrl,
+                    text: null, // Will be filled after extraction
+                    isExtracting: true
+                };
+                
+                state.documents.push(doc);
+                renderDocumentItem(doc);
+                extractText(doc); // Start async extraction
+            }
+            
+            // Auto-select the first uploaded document if none selected
+            if (!state.activeDocId && state.documents.length > 0) {
+                selectDocument(state.documents[state.documents.length - 1].id);
+            }
+            
+            els.fileInput.value = ''; // Reset input
+            updateChatUIState();
+        });
+
+        // Trigger complete clear-out of all documents in the sidebar corpus list
+        els.clearAllBtn.addEventListener('click', () => {
+            if (state.documents.length === 0) return;
+            
+            // Clean up memory
+            state.documents.forEach(doc => {
+                if (doc.objectUrl) URL.revokeObjectURL(doc.objectUrl);
+            });
+            
+            state.documents = [];
+            state.activeDocId = null;
+            els.documentList.innerHTML = '';
+            
+            // Re-render empty placeholder
+            els.documentList.appendChild(els.emptyDocsState);
+            els.emptyDocsState.style.display = 'block';
+            
+            // Hide preview area
+            els.pdfCanvasViewer.innerHTML = '';
+            els.pdfCanvasViewer.classList.add('hidden');
+            els.noPdfMessage.style.display = 'flex';
+            
+            showToast("Successfully cleared all papers from the corpus workspace.", "info");
+            updateChatUIState();
+        });
+
+        // Delete an individual document item by ID
+        function deleteDocument(docId, event) {
+            if (event) event.stopPropagation(); // Avoid triggering selection event
+            
+            const docIndex = state.documents.findIndex(d => d.id === docId);
+            if (docIndex === -1) return;
+            
+            const doc = state.documents[docIndex];
+            
+            // Clean up Object URL memory reference
+            if (doc.objectUrl) {
+                URL.revokeObjectURL(doc.objectUrl);
+            }
+            
+            // Remove from array list
+            state.documents.splice(docIndex, 1);
+            
+            // Remove from sidebar DOM
+            const domEl = document.getElementById(`ui_${docId}`);
+            if (domEl) {
+                domEl.remove();
+            }
+            
+            // Handle active document selection shifts
+            if (state.activeDocId === docId) {
+                if (state.documents.length > 0) {
+                    selectDocument(state.documents[state.documents.length - 1].id);
+                } else {
+                    state.activeDocId = null;
+                    els.pdfCanvasViewer.innerHTML = '';
+                    els.pdfCanvasViewer.classList.add('hidden');
+                    els.noPdfMessage.style.display = 'flex';
+                    
+                    els.emptyDocsState.style.display = 'block';
+                    els.documentList.appendChild(els.emptyDocsState);
+                }
+            }
+            
+            showToast(`Deleted "${doc.name}" from corpus.`, "info");
+            updateChatUIState();
+        }
+
+        function renderDocumentItem(doc) {
+            const div = document.createElement('div');
+            div.id = `ui_${doc.id}`;
+            div.className = `p-2 rounded cursor-pointer border flex items-center justify-between transition-colors ${state.activeDocId === doc.id ? 'bg-green-50 border-arxiv-green text-arxiv-green font-medium shadow-sm' : 'bg-white border-gray-200 hover:bg-gray-50'} group/item`;
+            div.onclick = () => selectDocument(doc.id);
+            
+            div.innerHTML = `
+                <div class="flex items-center truncate pr-2 flex-1">
+                    <svg class="w-4 h-4 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"></path></svg>
+                    <span class="text-sm truncate" title="${doc.name}">${doc.name}</span>
+                </div>
+                <div class="flex items-center space-x-2 flex-shrink-0 ml-1">
+                    <div id="status_${doc.id}">
+                        <svg class="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    </div>
+                    <button class="delete-doc-btn text-gray-400 hover:text-red-600 p-1 rounded hover:bg-gray-100 transition-colors opacity-0 group-hover/item:opacity-100 focus:opacity-100" title="Delete document">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+            `;
+            
+            // Wire click specifically to our dynamic delete button to prevent selecting event trigger
+            div.querySelector('.delete-doc-btn').addEventListener('click', (e) => deleteDocument(doc.id, e));
+            
+            els.documentList.appendChild(div);
+        }
+
+        async function extractText(doc) {
+            try {
+                const arrayBuffer = await doc.file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+                let fullText = "";
+                
+                // Extract text from pages. Limit to 150 pages to avoid extreme memory usage
+                const maxPages = Math.min(pdf.numPages, 150);
+                for (let i = 1; i <= maxPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(" ");
+                    fullText += `\n--- Page ${i} ---\n${pageText}\n`;
+                }
+                
+                doc.text = fullText;
+                doc.isExtracting = false;
+                
+                // Update UI Status
+                const statusEl = document.getElementById(`status_${doc.id}`);
+                if (statusEl) {
+                    statusEl.innerHTML = `<svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`;
+                }
+                
+                showToast(`Finished loading index of "${doc.name}"`, "success");
+                updateChatUIState();
+            } catch (err) {
+                console.error("PDF Extraction error:", err);
+                doc.isExtracting = false;
+                const statusEl = document.getElementById(`status_${doc.id}`);
+                if (statusEl) {
+                    statusEl.innerHTML = `<svg class="w-4 h-4 text-red-500" title="Extraction failed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`;
+                }
+                showToast(`Unable to parse text from "${doc.name}"`, "error");
+            }
+        }
+
+        // --- HTML Native Canvas PDF Rendering (Eliminates iframe preview restrictions) ---
+        async function renderPdfCanvasViewer(doc) {
+            els.pdfCanvasViewer.innerHTML = '';
+            els.pdfCanvasViewer.classList.remove('hidden');
+            els.noPdfMessage.style.display = 'none';
+
+            // Visual feedback loading state
+            els.pdfCanvasViewer.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-20 text-gray-500 w-full">
+                    <svg class="animate-spin h-10 w-10 text-arxiv-green mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <p class="text-sm font-medium">Preparing document workspace rendering...</p>
+                </div>
+            `;
+
+            try {
+                const arrayBuffer = await doc.file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+                els.pdfCanvasViewer.innerHTML = ''; // Clear loaded spinner
+
+                // We build placeholder cards instantly to avoid synchronous thread locking
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    const container = document.createElement('div');
+                    container.id = `page-container-${pageNum}`;
+                    container.className = 'bg-white shadow-lg p-4 border border-gray-200 rounded-lg max-w-full flex flex-col items-center justify-center min-h-[500px] transition-transform hover:scale-[1.005] duration-200';
+                    container.innerHTML = `
+                        <div class="animate-pulse flex flex-col items-center justify-center space-y-4 w-[500px] max-w-full h-[500px]">
+                            <div class="w-8 h-8 rounded-full border-4 border-t-arxiv-green border-gray-200 animate-spin"></div>
+                            <div class="h-3 bg-gray-200 rounded w-1/4"></div>
+                        </div>
+                    `;
+                    els.pdfCanvasViewer.appendChild(container);
+                }
+
+                // Sequentially render the canvas elements page by page
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    const page = await pdf.getPage(pageNum);
+                    const container = document.getElementById(`page-container-${pageNum}`);
+                    if (!container) continue;
+
+                    container.innerHTML = ''; // Clear layout loader
+                    container.classList.remove('min-h-[500px]', 'justify-center');
+
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'max-w-full h-auto rounded border border-gray-100 shadow-sm bg-white';
+                    container.appendChild(canvas);
+
+                    // Context label
+                    const label = document.createElement('div');
+                    label.className = 'w-full flex justify-between items-center mt-3 pt-2 border-t border-gray-100 text-[11px] text-gray-400 font-mono';
+                    label.innerHTML = `
+                        <span>rxivllm viewer</span>
+                        <span>Page ${pageNum} of ${pdf.numPages}</span>
+                    `;
+                    container.appendChild(label);
+
+                    // Fit scaling calculation based on live wrapper size
+                    const clientWidth = els.pdfCanvasViewer.clientWidth - 70;
+                    let viewport = page.getViewport({ scale: 1.0 });
+                    const computedScale = clientWidth / viewport.width;
+                    const responsiveScale = Math.min(Math.max(computedScale, 0.85), 1.5);
+                    viewport = page.getViewport({ scale: responsiveScale });
+
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+
+                    const renderContext = {
+                        canvasContext: context,
+                        viewport: viewport
+                    };
+
+                    await page.render(renderContext).promise;
+                }
+            } catch (err) {
+                console.error("Native render failed", err);
+                els.pdfCanvasViewer.innerHTML = `
+                    <div class="p-8 text-center text-red-500 w-full flex flex-col items-center">
+                        <svg class="w-12 h-12 mb-2 opacity-85" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        <p class="font-semibold text-lg">Unable to display preview</p>
+                        <p class="text-sm opacity-80 mt-1">${err.message}</p>
+                        <p class="text-xs text-gray-500 mt-6">Text extraction remains complete. You can still chat with the paper models.</p>
+                    </div>
+                `;
+            }
+        }
+
+        function selectDocument(id) {
+            // Unhighlight previous
+            if (state.activeDocId) {
+                const prevEl = document.getElementById(`ui_${state.activeDocId}`);
+                if (prevEl) {
+                    prevEl.className = "p-2 rounded cursor-pointer border flex items-center justify-between transition-colors bg-white border-gray-200 hover:bg-gray-50 group/item";
+                }
+            }
+            
+            state.activeDocId = id;
+            
+            // Highlight new
+            const newEl = document.getElementById(`ui_${id}`);
+            if (newEl) {
+                newEl.className = "p-2 rounded cursor-pointer border flex items-center justify-between transition-colors bg-green-50 border-arxiv-green text-arxiv-green font-medium shadow-sm group/item";
+            }
+            
+            // Render native canvases
+            const doc = state.documents.find(d => d.id === id);
+            if (doc) {
+                renderPdfCanvasViewer(doc);
+            }
+        }
+
+        // Live resize listener to keep the PDF pages rendered optimally
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (state.activeDocId) {
+                    const doc = state.documents.find(d => d.id === state.activeDocId);
+                    if (doc) renderPdfCanvasViewer(doc);
+                }
+            }, 400);
+        });
+
+        // Custom simple markdown parser
+        function parseMarkdown(text) {
+            let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            html = html.replace(/```([\s\S]*?)```/g, '<pre class="bg-gray-800 text-gray-100 p-3 rounded my-2 overflow-x-auto text-xs font-mono"><code>$1</code></pre>');
+            html = html.replace(/`([^`]+)`/g, '<code class="bg-gray-100 text-arxiv-green px-1 rounded text-xs font-mono border border-gray-200">$1</code>');
+            html = html.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
+            html = html.replace(/\n\n/g, '</p><p class="mt-2">');
+            html = html.replace(/\n/g, '<br>');
+            return `<p>${html}</p>`;
+        }
+
+        function addMessageToUI(role, text) {
+            const wrapper = document.createElement('div');
+            wrapper.className = "flex items-start";
+            
+            if (role === 'user') {
+                wrapper.classList.add('justify-end');
+                wrapper.innerHTML = `
+                    <div class="bg-gray-200 text-gray-800 border border-gray-300 p-3 rounded-2xl rounded-tr-sm shadow-sm max-w-[85%]">
+                        <p>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>')}</p>
+                    </div>
+                `;
+            } else {
+                wrapper.innerHTML = `
+                    <div class="flex-shrink-0 bg-arxiv-green/10 rounded-full p-2 mr-3 border border-arxiv-green/20 flex items-center justify-center w-9 h-9">
+                        <!-- AI Model Profile Icon -->
+                        <svg class="w-5 h-5 text-arxiv-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h.01M15 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 14a3 3 0 003-3h-6a3 3 0 003 3z" />
+                        </svg>
+                    </div>
+                    <div class="bg-white border border-gray-200 text-gray-800 p-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[85%] prose prose-sm prose-green">
+                        <p class="mb-1 font-bold text-arxiv-green flex items-center space-x-1">
+                            <span>rxivllm</span>
+                            <span class="bg-arxiv-green/10 text-arxiv-green text-[10px] font-mono px-1.5 py-0.5 rounded-full font-normal">AI Assistant</span>
+                        </p>
+                        ${parseMarkdown(text)}
+                    </div>
+                `;
+            }
+            
+            els.chatHistory.appendChild(wrapper);
+            els.chatHistory.scrollTop = els.chatHistory.scrollHeight;
+        }
+
+        async function fetchWithRetry(url, options, retries = 5) {
+            const delays = [1000, 2000, 4000, 8000, 16000];
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        const err = new Error(`API Error ${response.status}: ${errText}`);
+                        err.status = response.status;
+                        throw err;
+                    }
+                    return await response.json();
+                } catch (e) {
+                    if (i === retries - 1) throw e;
+                    if (e.status === 503) {
+                        showToast(`Server busy (503). Retrying in ${delays[i]/1000}s...`, "warning");
+                    }
+                    await new Promise(res => setTimeout(res, delays[i]));
+                }
+            }
+        }
+
+        async function handleSend() {
+            const text = els.chatInput.value.trim();
+            if (!text || !state.isConnected) return;
+
+            // Gather context from all successfully extracted documents
+            const readyDocs = state.documents.filter(d => d.text !== null);
+            if (readyDocs.length === 0) {
+                showToast("Please wait for at least one paper to finish text extraction.", "warning");
+                return;
+            }
+
+            // 1. Update UI
+            els.chatInput.value = '';
+            els.chatInput.disabled = true;
+            els.sendBtn.disabled = true;
+            addMessageToUI('user', text);
+
+            // Add loading indicator
+            const loadingId = 'loading_' + Date.now();
+            const loadingWrapper = document.createElement('div');
+            loadingWrapper.id = loadingId;
+            loadingWrapper.className = "flex items-start";
+            loadingWrapper.innerHTML = `
+                <div class="flex-shrink-0 bg-arxiv-green/10 rounded-full p-2 mr-3 border border-arxiv-green/20">
+                    <svg class="w-4 h-4 text-arxiv-green animate-pulse" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
+                </div>
+                <div class="bg-white border border-gray-200 p-3 rounded-2xl rounded-tl-sm shadow-sm flex space-x-1 items-center h-10">
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                </div>
+            `;
+            els.chatHistory.appendChild(loadingWrapper);
+            els.chatHistory.scrollTop = els.chatHistory.scrollHeight;
+
+            // 2. Prepare payload
+            // Construct massive context from all papers
+            let contextStr = "You are rxivllm, an expert academic research assistant. Answer the user's questions accurately based ONLY on the following research papers uploaded by the user. If the answer is not in the text, say so.\n\n=== UPLOADED RESEARCH PAPERS ===\n\n";
+            readyDocs.forEach(doc => {
+                contextStr += `--- Document: ${doc.name} ---\n${doc.text}\n\n`;
+            });
+
+            // Map local history to Gemini history format
+            const geminiHistory = state.chatHistory.map(msg => ({
+                role: msg.role === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.text }]
+            }));
+            
+            // Add current message
+            geminiHistory.push({
+                role: "user",
+                parts: [{ text }]
+            });
+
+            const payload = {
+                systemInstruction: {
+                    parts: [{ text: contextStr }]
+                },
+                contents: geminiHistory
+            };
+
+            let selectedModel = els.modelSelect.value;
+            let url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${state.apiKey}`;
+
+            try {
+                // 3. Make API Call with robust backup routing
+                let result;
+                try {
+                    result = await fetchWithRetry(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                } catch (firstTryError) {
+                    // Switch to Gemini 1.5 Flash if Gemini 2.5 Flash/Pro is overloaded with a 503
+                    if (firstTryError.status === 503 && selectedModel !== 'gemini-1.5-flash') {
+                        showToast("Standard model is busy. Automatically falling back to Gemini 1.5 Flash...", "warning");
+                        
+                        // Switch selector state & update targeting URL
+                        selectedModel = 'gemini-1.5-flash';
+                        els.modelSelect.value = 'gemini-1.5-flash';
+                        url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${state.apiKey}`;
+                        
+                        // Re-run the generation call on the backup model
+                        result = await fetchWithRetry(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                    } else {
+                        throw firstTryError;
+                    }
+                }
+
+                // 4. Handle Response
+                const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+                
+                // Save to history
+                state.chatHistory.push({ role: 'user', text });
+                state.chatHistory.push({ role: 'model', text: responseText });
+                
+                // Remove loading
+                document.getElementById(loadingId).remove();
+                
+                // Show response
+                addMessageToUI('model', responseText);
+
+            } catch (err) {
+                console.error("Chat Error:", err);
+                document.getElementById(loadingId).remove();
+                addMessageToUI('model', `**Error:** Could not get a response. ${err.message}. Please try switching models in the top right to complete your request.`);
+                showToast("Request failed. Please try changing models.", "error");
+            } finally {
+                els.chatInput.disabled = false;
+                els.sendBtn.disabled = false;
+                els.chatInput.focus();
+            }
+        }
+
+        els.sendBtn.addEventListener('click', handleSend);
+        els.chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+    </script>
+</body>
+</html>
